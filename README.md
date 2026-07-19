@@ -2,7 +2,7 @@
 
 한국어 글이 사람이 쓴 것인지 LLM이 생성한 것인지 **브라우저 안에서만** 판별하는 정적 웹 데모입니다. 서버·API·GPU가 필요 없고, 붙여넣은 글은 어디로도 전송되지 않습니다.
 
-**데모:** https://jadhvank.github.io/ko-ai-detector/ <!-- Pages 활성화 후 -->
+**데모:** https://jadhvank.github.io/llm-classifier/ <!-- Pages 활성화 후 -->
 
 ## 어떻게 동작하나
 
