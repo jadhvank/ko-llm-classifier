@@ -283,7 +283,7 @@
       '<div class="ratio">AI 의심 비율 <b>' + pct + '%</b> ' +
       '<span class="muted">(글자수 기준)</span></div>' +
       '<div class="muted">문장 ' + report.sentences.length + '개 중 ' +
-      suspCount + '개 의심 · 모델 ' + report.nModels + '개 앙상블 · ' +
+      suspCount + '개 의심, 모델 ' + report.nModels + '개 앙상블, ' +
       '의심 기준 ' + report.voteThreshold + '표 이상</div>';
 
     var html = "";
@@ -347,7 +347,7 @@
           return a + Object.keys(m.vocab).length;
         }, 0);
         document.getElementById("modelinfo").textContent =
-          "모델 " + mj.models.length + "개 · 총 " + nFeat.toLocaleString() + " feature 로드됨";
+          "모델 " + mj.models.length + "개, 총 " + nFeat.toLocaleString() + " feature 로드됨";
       })
       .catch(function (e) {
         status.className = "warn";
