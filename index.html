@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>한국어 AI 텍스트 판별 데모</title>
+  <style>
+    :root {
+      --bg: #f7f8fa; --card: #fff; --ink: #1b1d21; --muted: #6b7280;
+      --line: #e5e7eb; --clean: #f3f4f6; --medium: #fff4d6; --medium-b: #f2c14e;
+      --strong: #ffe0e0; --strong-b: #e5484d; --accent: #2563eb;
+      --ok: #16794c; --ok-bg: #e7f6ee; --warn: #b42318; --warn-bg: #fdeceb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+        "Malgun Gothic", "Segoe UI", sans-serif; line-height: 1.6;
+    }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 18px 64px; }
+    header h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    header p { margin: 0 0 16px; color: var(--muted); font-size: .92rem; }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 16px; margin-bottom: 16px;
+    }
+    textarea {
+      width: 100%; min-height: 180px; resize: vertical; padding: 12px;
+      border: 1px solid var(--line); border-radius: 8px; font-size: .98rem;
+      font-family: inherit; line-height: 1.6; color: var(--ink); background: #fff;
+    }
+    .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    button {
+      background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+      padding: 10px 18px; font-size: .95rem; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .muted { color: var(--muted); font-size: .85rem; }
+    #selfcheck { font-size: .8rem; padding: 4px 10px; border-radius: 999px; }
+    #selfcheck.ok { background: var(--ok-bg); color: var(--ok); }
+    #selfcheck.warn { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+    #selfcheck.loading { background: #eef2ff; color: var(--accent); }
+    .verdict {
+      display: inline-block; font-weight: 700; font-size: 1.05rem; padding: 6px 14px;
+      border-radius: 8px; margin-bottom: 8px;
+    }
+    .verdict.human { background: var(--ok-bg); color: var(--ok); }
+    .verdict.maybe { background: var(--medium); color: #8a6d1a; }
+    .verdict.ai { background: var(--strong); color: var(--strong-b); }
+    .ratio { font-size: 1rem; margin-bottom: 4px; }
+    .sent {
+      position: relative; padding: 8px 10px 8px 46px; border-radius: 8px;
+      margin-bottom: 6px; border: 1px solid transparent;
+    }
+    .sent.clean { background: var(--clean); }
+    .sent.medium { background: var(--medium); border-color: var(--medium-b); }
+    .sent.strong { background: var(--strong); border-color: var(--strong-b); }
+    .sent .badge {
+      position: absolute; left: 8px; top: 8px; font-size: .72rem; font-weight: 700;
+      background: rgba(0,0,0,.08); border-radius: 6px; padding: 1px 6px; color: #333;
+    }
+    .sent.strong .badge { background: var(--strong-b); color: #fff; }
+    .sent.medium .badge { background: var(--medium-b); color: #4a3a0a; }
+    .sent .txt { display: block; }
+    .sent .detail {
+      display: block; font-size: .74rem; color: var(--muted); margin-top: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); }
+    .legend span::before {
+      content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+      margin-right: 5px; vertical-align: -1px;
+    }
+    .legend .lc::before { background: var(--clean); }
+    .legend .lm::before { background: var(--medium-b); }
+    .legend .ls::before { background: var(--strong-b); }
+    footer { margin-top: 28px; font-size: .8rem; color: var(--muted); line-height: 1.7; }
+    footer a { color: var(--accent); text-decoration: none; }
+    .disclaimer {
+      background: #fff8e6; border: 1px solid #f2c14e; border-radius: 8px;
+      padding: 10px 12px; font-size: .82rem; color: #6b5410; margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>한국어 AI 텍스트 판별 데모</h1>
+      <p>한국어 글을 붙여넣으면 문장별로 AI 작성 의심 여부를 하이라이트하고
+        문서 전체의 AI 의심 비율과 판정을 보여줍니다. 모든 추론은
+        브라우저 안에서만 수행되며 입력 글은 서버로 전송되지 않습니다.</p>
+    </header>
+
+    <div class="disclaimer">
+      ⚠️ <b>연구·교육용 데모입니다.</b> 판정은 통계적 추정이며 절대적 근거가 아닙니다.
+      특정 코퍼스(청원·뉴스·백과)로 학습돼 다른 장르·문체에서는 오탐이 있을 수 있으니,
+      개인·학술적 불이익 판단의 근거로 쓰지 마세요.
+    </div>
+
+    <div class="card">
+      <span id="selfcheck" class="loading">모델 로딩 중…</span>
+      <span id="modelinfo" class="muted" style="margin-left:8px"></span>
+      <textarea id="input" style="margin-top:12px" placeholder="여기에 한국어 텍스트를 붙여넣으세요...">인공지능 기술은 우리의 일상생활을 빠르게 변화시키고 있으며 다양한 산업 분야에서 활용되고 있습니다. 이러한 변화는 우리에게 편리함과 효율성을 제공하지만 동시에 새로운 과제를 안겨주기도 합니다. 어제 친구랑 홍대에서 밥 먹고 카페 갔는데 사람이 너무 많아서 그냥 집으로 돌아왔어. 결론적으로 기술의 발전은 인간의 삶을 풍요롭게 만드는 중요한 원동력이라고 할 수 있습니다.</textarea>
+      <div class="row">
+        <button id="analyze" disabled>분석하기</button>
+        <div class="legend">
+          <span class="lc">정상</span>
+          <span class="lm">의심 (2표)</span>
+          <span class="ls">강한 의심 (3표)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="summary">
+      <p class="muted">텍스트를 입력하고 <b>분석하기</b>를 누르세요.</p>
+    </div>
+
+    <div id="sentences"></div>
+
+    <footer>
+      문장 단위 char n-gram TF-IDF + 선형 SVM 앙상블로 판별합니다. 서버·GPU 없이
+      브라우저에서만 동작합니다.<br />
+      <a href="https://blog.lyc8503.net/post/llm-classifier/" target="_blank" rel="noopener">lyc8503의 중국어 AIGC 탐지 실험</a>을
+      한국어로 재현한 개인 연구 프로젝트입니다.
+    </footer>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

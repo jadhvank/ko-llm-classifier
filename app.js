@@ -1,0 +1,366 @@
+/*
+ * Browser-only Korean AI-text detector.
+ *
+ * Client-side inference: preprocessing (markdown strip / sentence split / clean)
+ * -> char & word n-gram TF-IDF -> linear SVM decision -> char-weighted ai_ratio
+ * -> 3-way document verdict. Everything runs in the browser; pasted text never
+ * leaves the page.
+ *
+ * No external libraries. Model weights load from ./model.json. On load the
+ * module self-checks each model's decision against embedded reference vectors
+ * (relative error < 1e-3) and shows a badge if the port drifts.
+ */
+(function (global) {
+  "use strict";
+
+  // --- preprocessing --------------------------------------------------------
+
+  // Hangul syllables (가-힣) + compatibility jamo (ㄱ-ㅣ).
+  var KEEP_RE = /[^가-힣ㄱ-ㅣa-zA-Z0-9\s]/g;
+  var WS_RE = /\s+/g;
+  // .*? [.!?…]+ closers* lookahead(ws|end). Flags: g (iterate) + s (dotall).
+  var SENT_RE = /[\s\S]*?[.!?…]+["'”’」』〉》)\]】]*(?=\s|$)/g;
+
+  function stripMarkdown(text) {
+    if (!text) return "";
+    text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, "");          // images
+    text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");        // links -> text
+    text = text.replace(/^\s{0,3}#{1,6}\s*/gm, "");            // headings
+    text = text.replace(/^\s{0,3}>\s?/gm, "");                 // blockquotes
+    text = text.replace(/^\s{0,3}(?:[-*+]|\d+[.)])\s+/gm, ""); // list markers
+    text = text.replace(/\*\*|__|~~|[*_`]/g, "");              // emphasis/code
+    return text;
+  }
+
+  function unbalancedQuotes(seg) {
+    var dq = (seg.match(/"/g) || []).length;
+    if (dq % 2 === 1) return true;
+    var lo = (seg.match(/“/g) || []).length;
+    var ro = (seg.match(/”/g) || []).length;
+    if (lo !== ro) return true;
+    var ls = (seg.match(/‘/g) || []).length;
+    var rs = (seg.match(/’/g) || []).length;
+    if (ls !== rs) return true;
+    return false;
+  }
+
+  function regexSplit(text) {
+    text = (text || "").trim();
+    if (!text) return [];
+    var raw = [];
+    var re = new RegExp(SENT_RE.source, "gs");
+    var m;
+    var lastEnd = 0;
+    while ((m = re.exec(text)) !== null) {
+      var seg = m[0].trim();
+      if (seg) raw.push(seg);
+      lastEnd = re.lastIndex;
+      if (m[0].length === 0) re.lastIndex++; // guard (should not happen)
+    }
+    var tail = text.slice(lastEnd).trim();
+    if (tail) raw.push(tail);
+
+    var merged = [];
+    for (var i = 0; i < raw.length; i++) {
+      if (merged.length && unbalancedQuotes(merged[merged.length - 1])) {
+        merged[merged.length - 1] = (merged[merged.length - 1] + " " + raw[i]).trim();
+      } else {
+        merged.push(raw[i]);
+      }
+    }
+    return merged.filter(function (s) { return s; });
+  }
+
+  function cleanSentence(s) {
+    if (!s) return "";
+    s = s.replace(KEEP_RE, " ");
+    return s.replace(WS_RE, " ").trim();
+  }
+
+  function hangulRatio(s) {
+    var chars = Array.from(s).filter(function (c) { return !/\s/.test(c); });
+    if (!chars.length) return 0.0;
+    var h = 0;
+    for (var i = 0; i < chars.length; i++) {
+      var c = chars[i];
+      if ((c >= "가" && c <= "힣") || (c >= "ㄱ" && c <= "ㅣ")) h++;
+    }
+    return h / chars.length;
+  }
+
+  function prepDocument(text, minLen, minHR) {
+    minLen = minLen === undefined ? 10 : minLen;
+    minHR = minHR === undefined ? 0.30 : minHR;
+    if (!text) return [];
+    text = stripMarkdown(text);
+    var out = [];
+    var sents = regexSplit(text);
+    for (var i = 0; i < sents.length; i++) {
+      var cleaned = cleanSentence(sents[i]);
+      if (Array.from(cleaned).length < minLen) continue;
+      if (hangulRatio(cleaned) < minHR) continue;
+      out.push(cleaned);
+    }
+    return out;
+  }
+
+  // --- feature extraction (port of sklearn CountVectorizer analyzers) -------
+
+  function charWbNgrams(text, nmin, nmax) {
+    text = text.replace(/\s\s+/g, " ");
+    var out = [];
+    var words = text.split(/\s+/);
+    for (var wi = 0; wi < words.length; wi++) {
+      if (!words[wi]) continue; // Python str.split() drops empties
+      var w = " " + words[wi] + " ";
+      var wLen = w.length;
+      for (var n = nmin; n <= nmax; n++) {
+        var offset = 0;
+        out.push(w.slice(offset, offset + n));
+        while (offset + n < wLen) {
+          offset += 1;
+          out.push(w.slice(offset, offset + n));
+        }
+        if (offset === 0) break; // word shorter than n: emit once, stop
+      }
+    }
+    return out;
+  }
+
+  function wordNgrams(text, nmin, nmax) {
+    var tokens = text.match(/[가-힣a-zA-Z0-9]+/g) || [];
+    if (nmax === 1) return tokens;
+    var out = nmin === 1 ? tokens.slice() : [];
+    var lo = nmin === 1 ? 2 : nmin;
+    var nTok = tokens.length;
+    var hi = Math.min(nmax, nTok);
+    for (var n = lo; n <= hi; n++) {
+      for (var i = 0; i <= nTok - n; i++) {
+        out.push(tokens.slice(i, i + n).join(" "));
+      }
+    }
+    return out;
+  }
+
+  function analyze(model, cleaned) {
+    var text = cleaned.toLowerCase(); // TfidfVectorizer(lowercase=True)
+    var nmin = model.ngram_range[0], nmax = model.ngram_range[1];
+    return model.analyzer === "char_wb"
+      ? charWbNgrams(text, nmin, nmax)
+      : wordNgrams(text, nmin, nmax);
+  }
+
+  // decision = (coef . l2norm(tfidf(sentence))) + intercept
+  function decision(model, rawSentence) {
+    var cleaned = cleanSentence(rawSentence); // idempotent on already-clean text
+    var counts = new Map();
+    var toks = analyze(model, cleaned);
+    for (var i = 0; i < toks.length; i++) {
+      counts.set(toks[i], (counts.get(toks[i]) || 0) + 1);
+    }
+    var vocab = model.vocab, idf = model.idf, coef = model.coef;
+    var sublinear = model.sublinear_tf;
+    var dot = 0.0, normSq = 0.0;
+    counts.forEach(function (c, tok) {
+      var idx = vocab[tok];
+      if (idx === undefined) return;
+      var tf = sublinear ? 1.0 + Math.log(c) : c;
+      var val = tf * idf[idx];
+      normSq += val * val;
+      dot += coef[idx] * val;
+    });
+    if (normSq > 0.0) dot /= Math.sqrt(normSq);
+    return dot + model.intercept;
+  }
+
+  // --- document scoring -----------------------------------------------------
+
+  function scoreDocument(text, mj) {
+    var sentences = prepDocument(text);
+    var voteThreshold = mj.vote_threshold;
+    var results = [];
+    var totalChars = 0, suspChars = 0;
+    for (var i = 0; i < sentences.length; i++) {
+      var s = sentences[i];
+      var votes = 0;
+      var per = {};
+      for (var k = 0; k < mj.models.length; k++) {
+        var m = mj.models[k];
+        var d = decision(m, s);
+        per[m.name] = d;
+        if (d > 0) votes += 1; // LinearSVC: decision > 0 => predicts AI
+      }
+      var suspicious = votes >= voteThreshold;
+      var nChars = Array.from(s).length;
+      totalChars += nChars;
+      if (suspicious) suspChars += nChars;
+      results.push({ text: s, votes: votes, suspicious: suspicious, per: per });
+    }
+    var aiRatio = totalChars ? suspChars / totalChars : 0.0;
+    var cuts = mj.verdict_cuts;
+    var verdict = aiRatio < cuts.human_max ? "human"
+      : (aiRatio > cuts.ai_min ? "ai" : "maybe");
+    return {
+      aiRatio: aiRatio,
+      verdict: verdict,
+      sentences: results,
+      voteThreshold: voteThreshold,
+      nModels: mj.models.length
+    };
+  }
+
+  // --- self-check ----------------------------------------------------------
+
+  function selfCheck(mj) {
+    var byName = {};
+    mj.models.forEach(function (m) { byName[m.name] = m; });
+    var maxRel = 0, fails = [];
+    (mj.test_vectors || []).forEach(function (tv) {
+      Object.keys(tv.decisions).forEach(function (name) {
+        var expected = tv.decisions[name];
+        var got = decision(byName[name], tv.text);
+        var absErr = Math.abs(got - expected);
+        var rel = absErr / (Math.abs(expected) + 1e-9);
+        if (rel > maxRel) maxRel = rel;
+        if (rel >= 1e-3 && absErr > 1e-6) {
+          fails.push({ name: name, expected: expected, got: got, rel: rel });
+        }
+      });
+    });
+    return { ok: fails.length === 0, maxRel: maxRel, fails: fails };
+  }
+
+  var AIVH = {
+    stripMarkdown: stripMarkdown,
+    regexSplit: regexSplit,
+    cleanSentence: cleanSentence,
+    hangulRatio: hangulRatio,
+    prepDocument: prepDocument,
+    charWbNgrams: charWbNgrams,
+    wordNgrams: wordNgrams,
+    decision: decision,
+    scoreDocument: scoreDocument,
+    selfCheck: selfCheck
+  };
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = AIVH; // node smoke test
+  } else {
+    global.AIVH = AIVH;
+  }
+
+  // --- browser UI wiring ---------------------------------------------------
+
+  if (typeof document === "undefined") return;
+
+  var MODEL = null;
+
+  function verdictLabel(v) {
+    return v === "ai" ? "AI 작성 의심"
+      : v === "maybe" ? "판단 보류 (혼재)"
+      : "사람 작성 추정";
+  }
+
+  function highlightClass(votes, threshold) {
+    if (votes >= threshold + 1) return "sent strong"; // 3+ (of 3 models)
+    if (votes >= threshold) return "sent medium";      // == threshold (2)
+    return "sent clean";
+  }
+
+  function render(report) {
+    var summary = document.getElementById("summary");
+    var pct = (report.aiRatio * 100).toFixed(1);
+    var vClass = report.verdict; // human | maybe | ai
+    if (!report.sentences.length) {
+      summary.innerHTML = '<p class="muted">분석할 한국어 문장을 찾지 못했습니다 ' +
+        '(문장이 너무 짧거나 한글 비율이 낮음).</p>';
+      document.getElementById("sentences").innerHTML = "";
+      return;
+    }
+    var suspCount = report.sentences.filter(function (s) { return s.suspicious; }).length;
+    summary.innerHTML =
+      '<div class="verdict ' + vClass + '">' + verdictLabel(report.verdict) + '</div>' +
+      '<div class="ratio">AI 의심 비율 <b>' + pct + '%</b> ' +
+      '<span class="muted">(글자수 기준)</span></div>' +
+      '<div class="muted">문장 ' + report.sentences.length + '개 중 ' +
+      suspCount + '개 의심 · 모델 ' + report.nModels + '개 앙상블 · ' +
+      '의심 기준 ' + report.voteThreshold + '표 이상</div>';
+
+    var html = "";
+    for (var i = 0; i < report.sentences.length; i++) {
+      var s = report.sentences[i];
+      var cls = highlightClass(s.votes, report.voteThreshold);
+      var perParts = [];
+      Object.keys(s.per).forEach(function (name) {
+        var d = s.per[name];
+        perParts.push(name + "=" + (d > 0 ? "+" : "") + d.toFixed(2));
+      });
+      html += '<div class="' + cls + '">' +
+        '<span class="badge">' + s.votes + '표</span>' +
+        '<span class="txt">' + escapeHtml(s.text) + '</span>' +
+        '<span class="detail">' + perParts.join("  ") + '</span>' +
+        '</div>';
+    }
+    document.getElementById("sentences").innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function showSelfCheck(mj) {
+    var res = selfCheck(mj);
+    var badge = document.getElementById("selfcheck");
+    if (res.ok) {
+      badge.className = "ok";
+      badge.textContent = "자가 검증 통과 (최대 상대오차 " + res.maxRel.toExponential(1) + ")";
+    } else {
+      badge.className = "warn";
+      badge.textContent = "⚠ 자가 검증 실패: JS와 Python 결과 불일치 " +
+        res.fails.length + "건 (최대 상대오차 " + res.maxRel.toExponential(1) + ")";
+      console.warn("self-check failures", res.fails);
+    }
+  }
+
+  function run() {
+    if (!MODEL) return;
+    var text = document.getElementById("input").value;
+    render(scoreDocument(text, MODEL));
+  }
+
+  function init() {
+    var status = document.getElementById("selfcheck");
+    status.className = "loading";
+    status.textContent = "모델 로딩 중…";
+    fetch("./model.json")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (mj) {
+        MODEL = mj;
+        showSelfCheck(mj);
+        document.getElementById("analyze").disabled = false;
+        var nFeat = mj.models.reduce(function (a, m) {
+          return a + Object.keys(m.vocab).length;
+        }, 0);
+        document.getElementById("modelinfo").textContent =
+          "모델 " + mj.models.length + "개 · 총 " + nFeat.toLocaleString() + " feature 로드됨";
+      })
+      .catch(function (e) {
+        status.className = "warn";
+        status.textContent = "모델 로드 실패: " + e.message +
+          " (python -m http.server 로 실행했는지 확인하세요)";
+      });
+
+    document.getElementById("analyze").addEventListener("click", run);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})(typeof globalThis !== "undefined" ? globalThis : this);
