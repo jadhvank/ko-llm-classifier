@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 텍스트 판별</title>
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1f2328; --muted: #6b7280; --card: #f6f8fa;
+      --border: #e5e7eb; --accent: #2563eb;
+      --green: #16a34a; --yellow: #d97706; --red: #dc2626; --gray: #9ca3af;
+      --hl-strong-bg: #fee2e2; --hl-strong-bd: #fca5a5;
+      --hl-medium-bg: #fef3c7; --hl-medium-bd: #fcd34d;
+      --hl-clean-bg: transparent; --hl-clean-bd: #e5e7eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --card: #161b22;
+        --border: #30363d; --accent: #4493f8;
+        --hl-strong-bg: #3d1a1a; --hl-strong-bd: #7f1d1d;
+        --hl-medium-bg: #3a2f12; --hl-medium-bd: #78500a;
+        --hl-clean-bg: transparent; --hl-clean-bd: #30363d;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 12px; background: var(--bg); color: var(--fg);
+      font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    }
+    .host { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 8px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px; margin-bottom: 10px;
+    }
+    .verdict-row { display: flex; align-items: center; gap: 10px; }
+    .dot { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto; box-shadow: inset 0 -2px 4px rgba(0,0,0,.15); }
+    .dot.human { background: var(--green); } .dot.ai { background: var(--red); }
+    .dot.maybe { background: var(--yellow); } .dot.na, .dot.idle { background: var(--gray); }
+    .vlabel { font-size: 15px; font-weight: 700; }
+    .ratio { font-size: 13px; color: var(--muted); margin-top: 6px; }
+    .ratio b { color: var(--fg); font-size: 15px; }
+    button {
+      font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--fg); padding: 7px 12px;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .btnrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 10px; }
+    .toggle input { width: 16px; height: 16px; }
+    .note {
+      font-size: 11.5px; color: var(--muted); line-height: 1.55;
+      border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px;
+    }
+    .note p { margin: 0 0 6px; }
+    .note p:last-child { margin-bottom: 0; }
+    .qmark {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 15px; height: 15px; border-radius: 50%;
+      background: var(--gray); color: #fff; font-size: 10px; font-weight: 700;
+      line-height: 1; vertical-align: -3px; margin: 0 1px;
+    }
+    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+    .sent { border: 1px solid var(--hl-clean-bd); background: var(--hl-clean-bg); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; }
+    .sent.strong { background: var(--hl-strong-bg); border-color: var(--hl-strong-bd); }
+    .sent.medium { background: var(--hl-medium-bg); border-color: var(--hl-medium-bd); }
+    .sent .txt { display: block; }
+    .sent .meta { display: block; font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+    .badge { display: inline-block; min-width: 18px; text-align: center; font-size: 10.5px; font-weight: 700;
+      border-radius: 6px; padding: 0 5px; margin-right: 6px; background: var(--border); }
+    .muted { color: var(--muted); }
+    .foot { margin-top: 12px; font-size: 11px; }
+    a { color: var(--accent); }
+    #empty { text-align: center; padding: 22px 8px; }
+  </style>
+</head>
+<body>
+  <div class="host" id="host">—</div>
+
+  <div class="card" id="summary" hidden>
+    <div class="verdict-row">
+      <span class="dot" id="dot"></span>
+      <div>
+        <div class="vlabel" id="vlabel"></div>
+        <div class="ratio" id="ratio"></div>
+      </div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="autotoggle" />
+      <span id="autolabel">이 도메인 방문 시 자동 분석</span>
+    </label>
+  </div>
+
+  <div class="btnrow">
+    <button class="primary" id="analyze">이 페이지 분석</button>
+    <button id="openopts">설정</button>
+  </div>
+
+  <div class="note" id="caveat">
+    <p>아직 실험 단계라 판별 결과는 확정이 아니라 참고용입니다. 청원, 뉴스, 백과 글과 Claude가 쓴 글로만 학습해서 그 밖의 장르나 다른 AI가 쓴 글, 번역문에서는 정확도가 떨어질 수 있습니다.</p>
+    <p>한국어 문장이 너무 적어 판별하기 어려우면 아이콘이 <span class="qmark">?</span> 회색으로 표시됩니다.</p>
+  </div>
+
+  <div id="empty" class="muted" hidden>아직 분석 결과가 없습니다. <br />“이 페이지 분석”을 눌러보세요.</div>
+
+  <div id="detail" hidden>
+    <h2>문장별 신호</h2>
+    <div id="sentences"></div>
+  </div>
+
+  <div class="foot" id="modelfoot">
+    <a id="bmc" href="https://ko-fi.com/jadhvank" target="_blank" rel="noopener noreferrer">☕ 개발자에게 커피 한 잔 사주기</a>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

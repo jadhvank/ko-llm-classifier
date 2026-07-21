@@ -4,6 +4,21 @@
 
 **데모:** https://jadhvank.github.io/ko-llm-classifier/ <!-- Pages 활성화 후 -->
 
+## 크롬 확장 — 신호등 ([`extension/`](extension/))
+
+이 판별기를 브라우저에 얹은 크롬 확장입니다. 웹페이지 본문을 자동으로 추출해 한국어 AI 작성 의심 정도를 **툴바 아이콘 신호등**으로 보여줍니다. 분석은 전부 브라우저 안에서만 이뤄지고, 페이지 내용은 어디로도 전송되지 않습니다.
+
+- 🟢 사람 작성 추정, 🟡 판단 보류(혼재), 🔴 AI 작성 의심, ⚪ 판별 불가. 아이콘 위 숫자는 AI 의심 비율(%)입니다.
+- 아이콘을 누르면 사이드 패널에 문장별 상세가 뜨고, 자주 보는 도메인은 자동 분석으로 등록할 수 있습니다.
+- 드래그로 선택한 텍스트가 있으면 그 부분만 분석합니다.
+
+**설치** — Chrome 웹스토어 심사 중입니다. 지금 바로 쓰려면:
+
+1. [Releases](../../releases)에서 `ko-ai-detector-*.zip`을 받아 압축을 풀거나, [`extension/`](extension/) 폴더를 내려받습니다.
+2. `chrome://extensions` → 우상단 **개발자 모드** 켜기 → **압축해제된 확장 프로그램을 로드** → 그 폴더 선택.
+
+설치와 동작 자세한 내용은 [`extension/README.md`](extension/README.md) 참고.
+
 ## 어떻게 동작하나
 
 - 문장 단위로 분해 → **char/word n-gram TF-IDF + 선형 SVM 앙상블**로 각 문장을 채점 → 의심 문장 글자 비율(`ai_ratio`)로 문서 판정(`human` / `maybe` / `ai`).
@@ -18,4 +33,10 @@
 
 ## 크레딧
 
-lyc8503의 [用"古典"机器学习检测 LLM 生成的网文](https://blog.lyc8503.net/post/llm-classifier/)(고전 머신러닝으로 LLM 생성 텍스트 탐지)을 한국어로 재현한 개인 연구 프로젝트입니다. 이 저장소에는 **웹 데모만** 포함되며, 학습 파이프라인과 데이터는 공개되지 않습니다.
+lyc8503의 [用"古典"机器学习检测 LLM 生成的网文](https://blog.lyc8503.net/post/llm-classifier/)(고전 머신러닝으로 LLM 생성 텍스트 탐지)을 한국어로 재현한 개인 연구 프로젝트입니다. 이 저장소에는 **웹 데모와 크롬 확장([`extension/`](extension/))만** 포함되며, 학습 파이프라인과 데이터는 공개되지 않습니다.
+
+본문 추출에는 Mozilla [Readability](https://github.com/mozilla/readability)(Apache-2.0)를 사용합니다.
+
+## 라이선스
+
+이 저장소의 코드(웹 데모, 크롬 확장)는 [MIT 라이선스](LICENSE)입니다. 단 확장에 포함된 `extension/vendor/Readability.js`는 Mozilla의 Apache-2.0 라이선스를 따릅니다(원본 라이선스 헤더 보존).
